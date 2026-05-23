@@ -151,4 +151,4 @@ This project is for **educational purposes only**. It is not financial advice. P
 
 **Madhav Bansal**  
 B.E. Computer Science, BITS Pilani  
-[LinkedIn](https://linkedin.com/in/your-profile) · [Email](mailto:bansal.madhav216@gmail.com)
+[LinkedIn](https://www.linkedin.com/in/madhav-bansal-374102399/) · [Email](mailto:bansal.madhav216@gmail.com)
