@@ -95,25 +95,7 @@ class TradingSignalGenerator:
         except Exception as e:
             print(f"❌ Error fetching data: {e}")
             return None
-
-    def get_realtime_price(self, ticker):
-        """
-        Fetches the current live price for a ticker.
-        Uses yfinance's fast_info which pulls the latest market price.
-        
-        Works for:
-        - Crypto: 'BTC-USD', 'ETH-USD', 'XRP-USD'  (24/7)
-        - Stocks: 'SPY', 'QQQ'                       (market hours only)
-        - Forex:  'EURUSD=X', 'USDINR=X'             (weekdays)
-        """
-        try:
-            ticker_obj = yf.Ticker(ticker)
-            info = ticker_obj.fast_info
-            price = info['last_price']
-            return round(price, 6)
-        except Exception as e:
-            return None
-
+    
     def engineer_features(self, data):
         """
         STEP 2: FEATURE ENGINEERING
@@ -167,7 +149,12 @@ class TradingSignalGenerator:
         df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
         df['EMA_26'] = df['Close'].ewm(span=26, adjust=False).mean()
         df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
-        df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
+        
+        # EMA_200 only if we have enough data (forex pairs may not)
+        if len(df) >= 250:
+            df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
+        else:
+            df['EMA_200'] = df['Close'].ewm(span=100, adjust=False).mean()  # Use shorter EMA for small datasets
         
         # Simple Moving Averages: Smoother trend lines
         df['SMA_20'] = df['Close'].rolling(window=20).mean()
@@ -192,9 +179,14 @@ class TradingSignalGenerator:
         # Rate of Change: How fast is price moving?
         df['ROC_12'] = (df['Close'] - df['Close'].shift(12)) / df['Close'].shift(12) * 100
         
-        # Volume-based features
-        df['Volume_SMA'] = df['Volume'].rolling(window=20).mean()
-        df['Volume_Ratio'] = df['Volume'] / df['Volume_SMA']
+        # Volume-based features (skip for forex - unreliable volume data)
+        if df['Volume'].sum() > 0:  # Only if volume exists
+            df['Volume_SMA'] = df['Volume'].rolling(window=20).mean()
+            df['Volume_Ratio'] = df['Volume'] / df['Volume_SMA'].replace(0, 1)
+        else:
+            # Fill with neutral values if volume is missing
+            df['Volume_SMA'] = df['Volume']
+            df['Volume_Ratio'] = 1.0
         
         # Price-based features (relative changes)
         df['Close_Pct_Change'] = df['Close'].pct_change() * 100
@@ -339,6 +331,12 @@ class TradingSignalGenerator:
         - max_depth=15: Prevent overfitting (too deep = memorizes noise)
         - min_samples_split=20: Require 20 samples minimum to split
         """
+        # Validate minimum data
+        if X is None or len(X) < 10:
+            print(f"⚠️  Insufficient data ({len(X) if X is not None else 0} samples). Need 10+ for training.")
+            self.model = None
+            return
+        
         print("🤖 Training Random Forest model...")
         
         # Scale features (important for many ML algorithms)
@@ -461,6 +459,101 @@ class TradingSignalGenerator:
         
         return df_backtest
     
+    def get_realtime_price(self, ticker):
+        """
+        REAL-TIME PRICE FETCHING
+        Fetches the LIVE current market price (updated every 1-15 seconds)
+        vs historical data which is daily.
+        
+        Why separate from fetch_market_data?
+        - fetch_market_data: Gets historical data for training (daily bars)
+        - get_realtime_price: Gets current price RIGHT NOW (live quote)
+        
+        Args:
+            ticker: Symbol (e.g., 'BTC-USD', 'AAPL', 'SPY')
+            
+        Returns:
+            dict with current price, change, high/low, volume, timestamp
+        """
+        try:
+            ticker_obj = yf.Ticker(ticker)
+            
+            # Get latest day's data (includes current close)
+            data = ticker_obj.history(period='1d')
+            
+            if data.empty:
+                print(f"❌ No real-time data for {ticker}")
+                return None
+            
+            current_row = data.iloc[-1]
+            info = ticker_obj.info
+            
+            # Get current price
+            current_price = current_row['Close']
+            
+            # Get previous close for change calculation
+            previous_close = info.get('previousClose', current_row['Open'])
+            price_change = current_price - previous_close
+            percent_change = (price_change / previous_close * 100) if previous_close > 0 else 0
+            
+            return {
+                'ticker': ticker,
+                'price': current_price,
+                'change': price_change,
+                'percent_change': percent_change,
+                'previous_close': previous_close,
+                'high_24h': current_row['High'],
+                'low_24h': current_row['Low'],
+                'volume': current_row['Volume'],
+                'timestamp': datetime.now(),
+                'market_status': 'Open' if 9 <= datetime.now().hour < 16 else 'Closed'
+            }
+            
+        except Exception as e:
+            print(f"❌ Error fetching real-time price for {ticker}: {e}")
+            return None
+    
+    def get_market_indices(self):
+        """
+        Fetch major market indices for trading context.
+        
+        Why this matters:
+        - VIX > 20: High volatility (risky environment)
+        - S&P 500 trend: Overall market health
+        - Dollar strength: Affects forex and commodities
+        
+        Returns:
+            dict with index prices and changes
+        """
+        indices = {
+            'S&P 500': '^GSPC',
+            'NASDAQ': '^IXIC',
+            'Dow Jones': '^DJI',
+            'VIX': '^VIX',
+            'Dollar Index': 'DX-Y.NYB',
+        }
+        
+        indices_data = {}
+        
+        for name, ticker in indices.items():
+            try:
+                data = yf.Ticker(ticker).history(period='1d')
+                
+                if not data.empty:
+                    current = data.iloc[-1]['Close']
+                    previous = data.iloc[0]['Close']
+                    change = ((current - previous) / previous) * 100
+                    
+                    indices_data[name] = {
+                        'price': current,
+                        'change': change,
+                        'ticker': ticker
+                    }
+            except:
+                pass
+        
+        return indices_data
+
     def get_latest_signal(self, ticker, market_type='crypto'):
         """
         MAIN EXECUTION: Get latest signal for a ticker
@@ -474,7 +567,7 @@ class TradingSignalGenerator:
         # Fetch data
         data = self.fetch_market_data(ticker, market_type)
         if data is None:
-            return None
+            return None, None
         
         # Engineer features
         data = self.engineer_features(data)
@@ -487,6 +580,29 @@ class TradingSignalGenerator:
         signal = self.generate_signals(data)
         
         return signal, data
+    
+    def get_complete_analysis(self, ticker, market_type='crypto'):
+        """
+        ENHANCED: Get signal + live price + market context all together
+        
+        Returns:
+            dict with signal, live price, and market indices
+        """
+        # Get signal from historical data
+        signal, historical_data = self.get_latest_signal(ticker, market_type)
+        
+        # Get live price
+        live_price = self.get_realtime_price(ticker)
+        
+        # Get market context
+        indices = self.get_market_indices()
+        
+        return {
+            'signal': signal,
+            'live_price': live_price,
+            'indices': indices,
+            'historical_data': historical_data
+        }
 
 
 class PerformanceAnalytics:

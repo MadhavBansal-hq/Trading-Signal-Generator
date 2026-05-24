@@ -280,7 +280,7 @@ def create_trading_dashboard(ticker, market_type='crypto', output_name=None):
     if output_name is None:
         output_name = f"{ticker}_{datetime.now().strftime('%Y%m%d')}_dashboard.html"
     
-    fig.write_html(f"{output_name}")
+    fig.write_html(output_name)
     print(f"✅ Dashboard saved: {output_name}")
     print(f"📂 Open the HTML file in your browser to view!")
     
@@ -366,7 +366,7 @@ def create_multi_asset_comparison(tickers_list, market_types):
     )
     
     output_name = f"multi_asset_comparison_{datetime.now().strftime('%Y%m%d')}.html"
-    fig.write_html(f"{output_name}")
+    fig.write_html(output_name)
     
     print(f"✅ Comparison dashboard saved: {output_name}")
     
@@ -389,6 +389,8 @@ if __name__ == "__main__":
         ('BTC-USD', 'crypto'),
         ('ETH-USD', 'crypto'),
         ('SPY', 'stock'),
+        ('EURINR=X', 'forex'),
+        ('USDINR=X', 'forex'),
     ]
     
     for ticker, market_type in assets:
